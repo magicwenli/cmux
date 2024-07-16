@@ -1,0 +1,9 @@
+[package]
+name = "gsm0710"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+binary_serde = "1.0.24"
+crc = "3.2.1"
+hex = "0.4.3"
