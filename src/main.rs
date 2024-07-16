@@ -1,35 +1,113 @@
-use std::error::Error;
-
 use crc::Crc;
 use hex::ToHex;
+use std::error::Error;
+use std::fmt::Display;
 
-#[derive(Debug, Clone)]
-enum Address {
-    AT,
-    SMS,
-    VOICE,
-    DATA,
+/// Sets or clears a specific bit in a byte.
+///
+/// # Arguments
+///
+/// * `value` - The original byte value.
+/// * `bit` - The bit position to set or clear.
+/// * `set` - A boolean indicating whether to set or clear the bit.
+///
+/// # Returns
+///
+/// The modified byte value.
+pub fn bit_set_to(value: u8, bit: u8, set: bool) -> u8 {
+    if set {
+        value | (1 << bit)
+    } else {
+        value & !(1 << bit)
+    }
 }
 
-impl From<Address> for u8 {
-    fn from(val: Address) -> Self {
-        match val {
-            Address::AT => 0x07,
-            Address::SMS => 0x0F,
-            Address::VOICE => 0x13,
-            Address::DATA => 0x17,
+#[derive(Debug, Clone)]
+pub enum DLCI {
+    AT = 0x1,
+    SMS = 0x3,
+    VOICE = 0x4,
+    DATA = 0x5,
+}
+
+impl From<Address> for DLCI {
+    fn from(addr: Address) -> Self {
+        match addr.0 & 0x3F {
+            0x1 => DLCI::AT,
+            0x3 => DLCI::SMS,
+            0x4 => DLCI::VOICE,
+            0x5 => DLCI::DATA,
+            _ => DLCI::AT,
         }
     }
 }
 
+impl Display for DLCI {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DLCI::AT => write!(f, "AT"),
+            DLCI::SMS => write!(f, "SMS"),
+            DLCI::VOICE => write!(f, "VOICE"),
+            DLCI::DATA => write!(f, "DATA"),
+        }
+    }
+}
+
+/// Address
+///
+/// +------+------+------+------+------+------+------+--- --+------+
+/// | Bit  |   1  |   2  |   3  |   4  |   5  |   6  |   7  |   8  |
+/// +------+------+------+------+------+------+------+------+------+
+/// | Data |  EA  | C/R  |                 D L C I                 |
+/// +------+------+------+------+------+------+------+------+------+
+///
+/// * EA: Extended Address Bit. This bit is always set to 1.
+/// * C/R: Command/Response Bit. See below.
+/// * DLCI: Data Link Connection Identifier. This field is 6 bits long.
+///
+/// +------------------+------------------------+-----------+
+/// | Command/response | Direction              | C/R value |
+/// +------------------+------------------------+-----------+
+/// | Command          | Initiator -> Responder | 1         |
+/// |                  | Responder -> Initiator | 0         |
+/// | Response         | Initiator -> Responder | 0         |
+/// |                  | Responder -> Initiator | 1         |
+/// +------------------+------------------------+-----------+
+#[derive(Debug, Clone)]
+struct Address(u8);
+
+impl Address {
+    pub fn with_cr(&self, cr: bool) -> Address {
+        Address(bit_set_to(self.0, 1, cr))
+    }
+
+    pub fn with_dlci(&self, dlci: DLCI) -> Address {
+        Address((self.0 & 0x3) | ((dlci as u8 & 0x3F) << 2))
+    }
+}
+
+impl Default for Address {
+    /// Default with DLCI::AT and C/R 1
+    fn default() -> Self {
+        Address(0b111)
+    }
+}
+
+impl Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let dlci = DLCI::from(self.clone());
+        write!(f, "{}", dlci)
+    }
+}
+
 struct PacketBuilder {
-    address: Option<u8>,
+    address: Option<Address>,
     content: Option<String>,
     control: u8,
 }
 
 impl PacketBuilder {
-    fn new() -> Self {
+    pub fn new() -> Self {
         PacketBuilder {
             address: None,
             content: None,
@@ -56,19 +134,19 @@ impl PacketBuilder {
             None => Err("Address is required".into()),
             Some(addr) => {
                 let crc = Crc::<u8>::new(&crc::CRC_8_ROHC);
-                let data: Vec<u8> = vec![*addr, self.control, self.length()? as u8];
+                let data: Vec<u8> = vec![addr.0, self.control, self.length()? as u8];
                 let crc_value = crc.checksum(&data);
                 Ok(!crc_value as u8)
             }
         }
     }
 
-    fn address(&mut self, address: Address) -> &mut Self {
-        self.address = Some(address.into());
+    pub fn address(&mut self, address: Address) -> &mut Self {
+        self.address = Some(address);
         self
     }
 
-    fn content(&mut self, content: String) -> &mut Self {
+    pub fn content(&mut self, content: String) -> &mut Self {
         if content.ends_with("\r\n") {
             self.content = Some(content);
         } else {
@@ -77,15 +155,15 @@ impl PacketBuilder {
         self
     }
 
-    fn control(&mut self, control: u8) -> &mut Self {
+    pub fn control(&mut self, control: u8) -> &mut Self {
         self.control = control;
         self
     }
 
-    fn build(&self) -> Packet {
+    pub fn build(&self) -> Packet {
         Packet {
             header: 0xF9,
-            address: self.address.unwrap(),
+            address: self.address.clone().unwrap().0,
             control: self.control,
             length: self.length().unwrap() as u16,
             content: self.content.clone().unwrap(),
@@ -157,7 +235,7 @@ impl Packet {
 
 fn main() {
     let p = PacketBuilder::new()
-        .address(Address::AT)
+        .address(Address::default())
         .content("AT+CMUX?".to_string())
         .build();
     println!("{}", p.to_hex_string());
@@ -169,12 +247,14 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Add;
+
     use super::*;
 
     #[test]
     fn test_packet_builder() {
         let p = PacketBuilder::new()
-            .address(Address::AT)
+            .address(Address::default())
             .content("AT+CMUX?".to_string())
             .build();
         assert_eq!(p.header, 0xF9);
@@ -193,7 +273,7 @@ mod tests {
             .repeat(10);
         let len = (content.len() + 2) * 2; // more than 128, so bit 1 is set zero
         let p = PacketBuilder::new()
-            .address(Address::AT)
+            .address(Address::default())
             .content(content)
             .build();
         assert_eq!(p.length, len as u16);
@@ -202,7 +282,7 @@ mod tests {
     #[test]
     fn test_packet_to_bytes() {
         let p = PacketBuilder::new()
-            .address(Address::AT)
+            .address(Address::default())
             .content("AT+CMUX?".to_string())
             .build();
         let data = p.to_hex_string();
@@ -214,12 +294,13 @@ mod tests {
         let content = "AT+CMUX?".to_string();
         let len = (content.len() + 2) * 2 + 1; // less than 128, so bit 1 is set 1
         let p = PacketBuilder::new()
-            .address(Address::AT)
+            .address(Address::default())
             .content("AT+CMUX?".to_string())
             .build();
         let d = Packet::from_bytes(p.to_bytes());
         assert_eq!(p, d);
         assert_eq!(d.length, len as u16);
+        assert_eq!(d.address, Address::default().0);
     }
 
     #[test]
@@ -229,7 +310,7 @@ mod tests {
             .repeat(10);
         let len = (content.len() + 2) * 2; // more than 128, so bit 1 is set zero
         let p = PacketBuilder::new()
-            .address(Address::AT)
+            .address(Address::default())
             .content(content)
             .build();
         let d = Packet::from_bytes(p.to_bytes());
