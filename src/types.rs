@@ -1,4 +1,4 @@
-/// This module contains types and functions related to GSM 07.10 protocol.
+use bitfield_struct::bitfield;
 use crc::Crc;
 use hex::ToHex;
 use std::error::Error;
@@ -12,13 +12,13 @@ const MAX_SINGLE_BIT_LENGTH: u16 = 127;
 /// # Arguments
 ///
 /// * `value` - The original byte value.
-/// * `bit` - The bit position to set or clear.
+/// * `bit` - The bit position to set or clear. Starts from 0.
 /// * `set` - A boolean indicating whether to set or clear the bit.
 ///
 /// # Returns
 ///
 /// The modified byte value.
-pub fn bit_set_to(value: u8, bit: u8, set: bool) -> u8 {
+pub const fn bit_set_to(value: u8, bit: u8, set: bool) -> u8 {
     if set {
         value | (1 << bit)
     } else {
@@ -27,7 +27,7 @@ pub fn bit_set_to(value: u8, bit: u8, set: bool) -> u8 {
 }
 
 /// Generates a checksum for [`Frame`] by the address, control, and length fields.
-pub fn checksum(addr: u8, control: u8, length: u16) -> Result<u8, Box<dyn Error>> {
+pub fn checksum_uih(addr: u8, control: u8, length: u16) -> Result<u8, Box<dyn Error>> {
     let crc = Crc::<u8>::new(&crc::CRC_8_ROHC);
     let mut data: Vec<u8> = vec![addr, control];
     if length > MAX_SINGLE_BIT_LENGTH {
@@ -40,10 +40,20 @@ pub fn checksum(addr: u8, control: u8, length: u16) -> Result<u8, Box<dyn Error>
     Ok(!crc_value)
 }
 
+/// Generates a checksum for [`Frame`] by the address, control, length, and content fields.
+pub fn checksum_ui(addr: u8, control: u8, length: u8, content: &str) -> Result<u8, Box<dyn Error>> {
+    let crc = Crc::<u8>::new(&crc::CRC_8_ROHC);
+    let mut data: Vec<u8> = vec![addr, control, length];
+    data.extend_from_slice(content.as_bytes());
+    let crc_value = crc.checksum(&data);
+    Ok(!crc_value)
+}
+
 /// Data Link Connection Identifier
 ///
 /// The Data Link Connection Identifier (DLCI) is a 6-bit field that identifies the logical channel between the DTE and DCE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum DLCI {
     AT = 0x1,
     SMS = 0x3,
@@ -51,14 +61,18 @@ pub enum DLCI {
     DATA = 0x5,
 }
 
-impl From<Address> for DLCI {
-    fn from(addr: Address) -> Self {
-        match addr.0 & 0x3F {
+impl DLCI {
+    const fn into_bits(self) -> u8 {
+        self as _
+    }
+
+    const fn from_bits(value: u8) -> Self {
+        match value {
             0x1 => DLCI::AT,
             0x3 => DLCI::SMS,
             0x4 => DLCI::VOICE,
             0x5 => DLCI::DATA,
-            _ => DLCI::AT,
+            _ => DLCI::DATA,
         }
     }
 }
@@ -103,76 +117,33 @@ impl From<Address> for DLCI {
 /// use gsm0710::types::DLCI;
 ///
 /// let addr = Address::default();
-/// assert_eq!(addr.0, 0b111);
+/// assert_eq!(addr.into_bits(), 0b111);
 ///
 /// let addr = addr.with_cr(false);
-/// assert_eq!(addr.0, 0b101);
+/// assert_eq!(addr.into_bits(), 0b101);
 ///
 /// let addr = addr.with_dlci(DLCI::DATA);
-/// assert_eq!(addr.0, 0b10101);
+/// assert_eq!(addr.into_bits(), 0b10101);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Address(pub u8);
 
-impl Address {
-    /// Creates a new `Address` with the specified EA (Extension Address) bit.
-    ///
-    /// # Arguments
-    ///
-    /// * `ea` - The value of the EA bit.
-    ///
-    /// # Returns
-    ///
-    /// A new `Address` with the specified EA bit.
-    fn with_ea(&self, ea: bool) -> Address {
-        Address(bit_set_to(self.0, 0, ea))
-    }
-
-    /// Creates a new `Address` with the specified CR (Command/Response) bit.
-    ///
-    /// # Arguments
-    ///
-    /// * `cr` - The value of the CR bit.
-    ///
-    /// # Returns
-    ///
-    /// A new `Address` with the specified CR bit.
-    pub fn with_cr(&self, cr: bool) -> Address {
-        Address(bit_set_to(self.0, 1, cr))
-    }
-
-    /// Creates a new `Address` with the specified [`DLCI`] (Data Link Connection Identifier).
-    ///
-    /// # Arguments
-    ///
-    /// * `dlci` - The [`DLCI`] value.
-    ///
-    /// # Returns
-    ///
-    /// A new `Address` with the specified [`DLCI`].
-    pub fn with_dlci(&self, dlci: DLCI) -> Address {
-        let ea = self.0 & (1 << 0);
-        let cr = self.0 & (1 << 1);
-        let address = Address::from(dlci);
-        Address(address.0 | ea | cr)
-    }
-}
-
-impl From<DLCI> for Address {
-    fn from(dlci: DLCI) -> Self {
-        Address((dlci as u8) << 2)
-    }
+#[bitfield(u8, default = false)]
+#[derive(PartialEq, Eq)]
+pub struct Address {
+    pub ea: bool,
+    pub cr: bool,
+    #[bits(6)]
+    pub dlci: DLCI,
 }
 
 impl Default for Address {
-    /// Default with DLCI::AT and C/R 1
     fn default() -> Self {
-        Address::from(DLCI::AT).with_cr(true).with_ea(true)
+        Address(0b111)
     }
 }
 
 /// Frame Type of [`Frame`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum FrameType {
     SABM,
     UA,
@@ -182,19 +153,20 @@ pub enum FrameType {
     UI,
 }
 
-/// Converts a [`Control`] enum variant into a [`FrameType`] enum variant.
-impl From<Control> for FrameType {
-    /// Converts the given `Control` variant into a corresponding `FrameType` variant.
-    ///
-    /// # Arguments
-    ///
-    /// * `control` - The [`Control`] variant to convert.
-    ///
-    /// # Returns
-    ///
-    /// The converted [`FrameType`] variant.
-    fn from(control: Control) -> Self {
-        match bit_set_to(control.0, 4, false) {
+impl FrameType {
+    const fn into_bits(self) -> u8 {
+        match self {
+            FrameType::SABM => 0b00101111,
+            FrameType::UA => 0b01100011,
+            FrameType::DM => 0b00001111,
+            FrameType::DISC => 0b01000011,
+            FrameType::UIH => 0b11101111,
+            FrameType::UI => 0b00000011,
+        }
+    }
+
+    const fn from_bits(value: u8) -> Self {
+        match value {
             0b00101111 => FrameType::SABM,
             0b01100011 => FrameType::UA,
             0b00001111 => FrameType::DM,
@@ -233,65 +205,75 @@ impl From<Control> for FrameType {
 /// use gsm0710::types::FrameType;
 ///
 /// let control = Control::default();
-/// assert_eq!(control, Control(0b11101111));
+/// assert_eq!(control.into_bits(), 0b11101111);
 ///
 /// let control = control.with_pf(true);
-/// assert_eq!(control, Control(0b11111111));
+/// assert_eq!(control.pf(), true);
 ///
-/// let control = control.with_type(FrameType::UA);
-/// assert_eq!(control, Control(0b01110011));
+/// let control = control.with_frame_type(FrameType::UA);
+/// assert_eq!(control.frame_type(), FrameType::UA);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Control(pub u8);
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct Control(u8);
 
-impl From<FrameType> for Control {
-    fn from(frame_type: FrameType) -> Self {
-        match frame_type {
-            FrameType::SABM => Control(0b00101111),
-            FrameType::UA => Control(0b01100011),
-            FrameType::DM => Control(0b00001111),
-            FrameType::DISC => Control(0b01000011),
-            FrameType::UIH => Control(0b11101111),
-            FrameType::UI => Control(0b00000011),
-        }
+impl Control {
+    pub const fn new() -> Self {
+        Control(0)
+    }
+
+    pub const fn with_frame_type(self, frame_type: FrameType) -> Self {
+        let pf = self.pf();
+        let control = Control(frame_type.into_bits());
+        control.with_pf(pf)
+    }
+
+    pub const fn frame_type(&self) -> FrameType {
+        FrameType::from_bits(self.0 & 0b11101111)
+    }
+
+    pub fn set_frame_type(&mut self, frame_type: FrameType) {
+        self.0 = self.with_frame_type(frame_type).0;
+    }
+
+    pub const fn with_pf(self, pf: bool) -> Self {
+        let value = bit_set_to(self.0, 4, pf);
+        Control(value)
+    }
+
+    pub const fn pf(&self) -> bool {
+        (self.0 & (1 << 4)) == (1 << 4)
+    }
+
+    pub fn set_pf(&mut self, pf: bool) {
+        self.0 = self.with_pf(pf).0;
+    }
+
+    pub fn into_bits(self) -> u8 {
+        self.into()
+    }
+
+    pub fn from_bits(value: u8) -> Self {
+        value.into()
+    }
+}
+
+impl From<u8> for Control {
+    fn from(value: u8) -> Self {
+        Control(value)
+    }
+}
+
+impl From<Control> for u8 {
+    fn from(value: Control) -> Self {
+        value.0
     }
 }
 
 impl Default for Control {
-    /// Default with P/F 1 and UIH type
     fn default() -> Self {
-        Control::from(FrameType::UIH).with_pf(false)
-    }
-}
-
-/// Implementation of the `Control` struct.
-impl Control {
-    /// Creates a new `Control` instance with the specified `pf` value.
-    ///
-    /// # Arguments
-    ///
-    /// * `pf` - A boolean value indicating the value of the PF bit.
-    ///
-    /// # Returns
-    ///
-    /// A new `Control` instance with the specified `pf` value.
-    pub fn with_pf(&self, pf: bool) -> Control {
-        Control(bit_set_to(self.0, 4, pf))
-    }
-
-    /// Creates a new `Control` instance with the specified `frame_type` value.
-    ///
-    /// # Arguments
-    ///
-    /// * `frame_type` - A [`FrameType`] value indicating the type of the frame.
-    ///
-    /// # Returns
-    ///
-    /// A new `Control` instance with the specified `frame_type` value.
-    pub fn with_type(&self, frame_type: FrameType) -> Control {
-        let pf = self.0 & (1 << 4);
-        let control = Control::from(frame_type);
-        Control(bit_set_to(control.0, 4, pf != 0))
+        Control::new()
+            .with_pf(false)
+            .with_frame_type(FrameType::UIH)
     }
 }
 
@@ -302,11 +284,11 @@ impl Control {
 /// # Example
 ///
 /// ```
-/// use gsm0710::types::{Address, FrameBuilder};
+/// use gsm0710::types::{Address, Control, FrameBuilder};
 /// let p = FrameBuilder::default()
 ///    .with_address(Address::default())
 ///    .with_content("AT+CMUX?".to_string())
-///    .with_control(0xEF)
+///    .with_control(Control::default())
 ///    .build();
 /// assert_eq!(p.header, 0xF9);
 /// ```
@@ -314,11 +296,21 @@ impl Control {
 /// # Note
 ///
 /// FrameBuilder will automatically add `\r\n` to the end of content if it is not present.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FrameBuilder {
     address: Option<Address>,
+    control: Option<Control>,
     content: Option<String>,
-    control: Control,
+}
+
+impl Default for FrameBuilder {
+    fn default() -> Self {
+        FrameBuilder {
+            address: Some(Address::default()),
+            control: Some(Control::default()),
+            content: None,
+        }
+    }
 }
 
 /// The `FrameBuilder` struct is responsible for building frames.
@@ -350,12 +342,14 @@ impl FrameBuilder {
     /// - `Ok(u8)`: The checksum of the frame if the address is present.
     /// - `Err(Box<dyn Error>)`: An error indicating that the address is required.
     fn checksum(&self) -> Result<u8, Box<dyn Error>> {
-        match &self.address {
-            None => Err("Address is required".into()),
-            Some(addr) => {
-                let len = self.length()?;
-                checksum(addr.0, self.control.0, len)
-            }
+        let addr = self.address.expect("Address is required").into_bits();
+        let control = self.control.expect("Control is required").into_bits();
+        let length = self.length().expect("Length is required");
+
+        if self.control.unwrap().frame_type() == FrameType::UI {
+            checksum_ui(addr, control, length as u8, self.content.as_ref().unwrap())
+        } else {
+            checksum_uih(addr, control, length)
         }
     }
 
@@ -400,8 +394,8 @@ impl FrameBuilder {
     /// # Returns
     ///
     /// - `&mut Self`: A mutable reference to the `FrameBuilder` object.
-    pub fn with_control(&mut self, control: u8) -> &mut Self {
-        self.control = Control(control);
+    pub fn with_control(&mut self, control: Control) -> &mut Self {
+        self.control = Some(control);
         self
     }
 
@@ -413,11 +407,11 @@ impl FrameBuilder {
     pub fn build(&self) -> Frame {
         Frame {
             header: 0xF9,
-            address: self.address.unwrap(),
-            control: self.control,
-            length: self.length().unwrap(),
-            content: self.content.clone().unwrap(),
-            checksum: self.checksum().unwrap(),
+            address: self.address.expect("Address is required"),
+            control: self.control.expect("Control is required"),
+            length: self.length().expect("Length is required"),
+            content: self.content.clone().expect("Content is required"),
+            checksum: self.checksum().expect("Checksum is required"),
             footer: 0xF9,
         }
     }
@@ -448,7 +442,11 @@ impl Frame {
     ///
     /// A `Vec<u8>` containing the byte representation of the frame.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut data = vec![self.header, self.address.0, self.control.0];
+        let mut data = vec![
+            self.header,
+            self.address.into_bits(),
+            self.control.into_bits(),
+        ];
         if self.length > MAX_SINGLE_BIT_LENGTH {
             data.push((self.length >> 8) as u8);
             data.push((self.length & 0xFF) as u8);
@@ -483,9 +481,9 @@ impl Frame {
         let mut p = 0;
         let header = data[p];
         p += 1;
-        let address = Address(data[p]);
+        let address = Address::from_bits(data[p]);
         p += 1;
-        let control = Control(data[p]);
+        let control = Control::from_bits(data[p]);
         p += 1;
         let length = if data[p] & 0x1 == 0 {
             let l = ((data[p] as u16) << 8) | data[p + 1] as u16;
@@ -529,14 +527,18 @@ impl Frame {
             return Err("Length field is invalid".into());
         }
 
-        if let Ok(c) = checksum(self.address.0, self.control.0, self.length) {
+        if let Ok(c) = checksum_uih(
+            self.address.into_bits(),
+            self.control.into_bits(),
+            self.length,
+        ) {
             if c != self.checksum {
-                return Err("Checksum is invalid".into());
+                Err("Checksum is invalid".into())
             } else {
                 Ok(())
             }
         } else {
-            return Err("Checksum calculation failed".into());
+            Err("Checksum calculation failed".into())
         }
     }
 }
@@ -548,7 +550,6 @@ mod tests {
     #[test]
     fn test_packet_builder() {
         let p = FrameBuilder::default()
-            .with_address(Address::default())
             .with_content("AT+CMUX?".to_string())
             .build();
         assert_eq!(p.header, 0xF9);
@@ -611,5 +612,31 @@ mod tests {
         assert_eq!(p, d);
         assert_eq!(d.length, len as u16);
         assert_eq!(d.verify().is_ok(), true);
+    }
+
+    #[test]
+    fn test_packet_checksum() {
+        let p = FrameBuilder::default()
+            .with_address(Address::default())
+            .with_content("AT+CMUX?".to_string())
+            .build();
+        let ori = p.checksum;
+        let exp = checksum_uih(p.address.into_bits(), p.control.into_bits(), p.length).unwrap();
+        assert_eq!(ori, exp);
+
+        let p = FrameBuilder::default()
+            .with_address(Address::default())
+            .with_content("AT+CMUX?".to_string())
+            .with_control(Control::default().with_frame_type(FrameType::UI))
+            .build();
+        let ori = p.checksum;
+        let exp = checksum_ui(
+            p.address.into_bits(),
+            p.control.into_bits(),
+            p.length as u8,
+            &p.content,
+        )
+        .unwrap();
+        assert_eq!(ori, exp);
     }
 }
