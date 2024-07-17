@@ -113,8 +113,8 @@ impl DLCI {
 /// # Example
 ///
 /// ```
-/// use gsm0710::types::Address;
-/// use gsm0710::types::DLCI;
+/// use cmux::types::Address;
+/// use cmux::types::DLCI;
 ///
 /// let addr = Address::default();
 /// assert_eq!(addr.into_bits(), 0b111);
@@ -202,8 +202,8 @@ impl FrameType {
 /// # Example
 ///
 /// ```
-/// use gsm0710::types::Control;
-/// use gsm0710::types::FrameType;
+/// use cmux::types::Control;
+/// use cmux::types::FrameType;
 ///
 /// let control = Control::default();
 /// assert_eq!(control.into_bits(), 0b11101111);
@@ -294,7 +294,7 @@ impl Debug for Control {
 /// # Example
 ///
 /// ```
-/// use gsm0710::types::{Address, Control, FrameBuilder};
+/// use cmux::types::{Address, Control, FrameBuilder};
 /// let p = FrameBuilder::default()
 ///    .with_address(Address::default())
 ///    .with_content("AT+CMUX?".to_string())
@@ -427,7 +427,7 @@ impl FrameBuilder {
     }
 }
 
-/// Represents a frame in the GSM0710 protocol.
+/// Represents a frame in the cmux protocol.
 ///
 /// The Frame struct is defined as follows:
 ///

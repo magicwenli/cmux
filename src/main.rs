@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use gsm0710::types::{Address, Control, Frame, FrameBuilder};
+use cmux::types::{Address, Control, Frame, FrameBuilder};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

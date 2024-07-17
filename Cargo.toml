@@ -1,10 +1,10 @@
 [package]
-name = "gsm0710"
+name = "cmux"
 version = "0.1.0"
 edition = "2021"
 authors = ["magicWenli <yxnian@outlook.com>"]
 description = "A library for parsing GSM 07.10 Frame"
-respository = "https://github.com/magicwenli/gsm0710"
+respository = "https://github.com/magicwenli/cmux"
 license = "MIT"
 
 [dependencies]
