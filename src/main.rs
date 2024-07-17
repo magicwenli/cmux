@@ -52,7 +52,8 @@ fn hexstring_to_bytes(hexstring: &str) -> Vec<u8> {
 }
 
 fn hexbyte_to_bytes(hexbyte: &str) -> u8 {
-    u8::from_str_radix(hexbyte, 16).unwrap()
+    let hexbyte = hexbyte.replace("0x", "");
+    u8::from_str_radix(&hexbyte, 16).unwrap()
 }
 
 fn main() {
@@ -75,5 +76,33 @@ fn main() {
                 println!("An error occurred while verifying the frame");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hexstring_to_bytes() {
+        assert_eq!(hexstring_to_bytes("F9010203F9"), vec![249, 1, 2, 3, 249]);
+        assert_eq!(
+            hexstring_to_bytes("F9 01 02 03 F9"),
+            vec![249, 1, 2, 3, 249]
+        );
+        assert_eq!(
+            hexstring_to_bytes("F9\n01\n02\n03\nF9"),
+            vec![249, 1, 2, 3, 249]
+        );
+        assert_eq!(
+            hexstring_to_bytes("0xF9 0x01 0x02 0x03 0xF9"),
+            vec![249, 1, 2, 3, 249]
+        );
+    }
+
+    #[test]
+    fn test_hexbyte_to_bytes() {
+        assert_eq!(hexbyte_to_bytes("F9"), 249);
+        assert_eq!(hexbyte_to_bytes("0xF9"), 249);
     }
 }
