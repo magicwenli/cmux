@@ -3,7 +3,6 @@ use gsm0710::types::{Address, Control, Frame, FrameBuilder};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
-#[command(propagate_version = true)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -28,7 +27,6 @@ struct GenerateArgs {
     #[arg(short, long, default_value = "EF")]
     control: String,
     /// content field
-    #[arg(short, long)]
     content: String,
 }
 
@@ -61,9 +59,12 @@ fn main() {
 
     match cli.command {
         Commands::Generate(args) => {
+            let address = Address::from_bits(hexbyte_to_bytes(&args.address));
+            let control = Control::from_bits(hexbyte_to_bytes(&args.control));
+
             let p = FrameBuilder::default()
-                .with_address(Address::from_bits(hexbyte_to_bytes(&args.address)))
-                .with_control(Control::from_bits(hexbyte_to_bytes(&args.control)))
+                .with_address(address)
+                .with_control(control)
                 .with_content(args.content)
                 .build();
             println!("{}", p.to_hex_string());
