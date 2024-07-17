@@ -3,6 +3,7 @@ use hex::ToHex;
 use std::error::Error;
 use std::fmt::Display;
 
+/// Maximum length of a single octet.
 const MAX_SINGLE_BIT_LENGTH: u16 = 127;
 
 /// Sets or clears a specific bit in a byte.
@@ -41,7 +42,7 @@ pub fn checksum(addr: u8, control: u8, length: u16) -> Result<u8, Box<dyn Error>
 /// Data Link Connection Identifier
 ///
 /// The Data Link Connection Identifier (DLCI) is a 6-bit field that identifies the logical channel between the DTE and DCE.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DLCI {
     AT = 0x1,
     SMS = 0x3,
@@ -93,7 +94,7 @@ impl Display for DLCI {
 ///     <td colspan=6 align="center">DLCI</td>
 ///   </tr>
 /// </table>
-/// 
+///
 /// * EA: Extended Address Bit. This bit is always set to 1.
 /// * C/R: Command/Response Bit. See below.
 /// * [`DLCI`]: Data Link Connection Identifier. This field is 6 bits long.
@@ -104,8 +105,22 @@ impl Display for DLCI {
 /// |                  | Responder -> Initiator | 0         |
 /// | Response         | Initiator -> Responder | 0         |
 /// |                  | Responder -> Initiator | 1         |
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Address(u8);
+///
+/// # Example
+///
+/// ```
+/// use gsm0710::types::Address;
+/// use gsm0710::types::DLCI;
+///
+/// let addr = Address::default();
+///
+/// assert_eq!(addr.0, 0b111);
+/// assert_eq!(addr.with_cr(true).0, 0b111);
+/// assert_eq!(addr.with_cr(false).0, 0b101);
+/// assert_eq!(addr.with_dlci(DLCI::DATA).0, 0b10111);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Address(pub u8);
 
 impl Address {
     pub fn with_cr(&self, cr: bool) -> Address {
@@ -132,12 +147,12 @@ impl Default for Address {
 
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let dlci = DLCI::from(self.clone());
+        let dlci = DLCI::from(*self);
         write!(f, "{}", dlci)
     }
 }
 
-/// Frame Builder for GSM 07.10 Frame
+/// Frame Builder for GSM 07.10 [`Frame`]
 ///
 /// The FrameBuilder is a builder pattern for creating a Packet.
 ///
@@ -146,9 +161,9 @@ impl Display for Address {
 /// ```
 /// use gsm0710::types::{Address, FrameBuilder};
 /// let p = FrameBuilder::default()
-///    .address(Address::default())
-///    .content("AT+CMUX?".to_string())
-///    .control(0xEF)
+///    .with_address(Address::default())
+///    .with_content("AT+CMUX?".to_string())
+///    .with_control(0xEF)
 ///    .build();
 /// assert_eq!(p.header, 0xF9);
 /// ```
@@ -172,7 +187,14 @@ impl Default for FrameBuilder {
     }
 }
 
+/// The `FrameBuilder` struct is responsible for building frames.
 impl FrameBuilder {
+    /// Calculates the length of the frame.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(u16)`: The length of the frame if the content is present.
+    /// - `Err(Box<dyn Error>)`: An error indicating that the content is required.
     fn length(&self) -> Result<u16, Box<dyn Error>> {
         match &self.content {
             Some(content) => {
@@ -187,6 +209,12 @@ impl FrameBuilder {
         }
     }
 
+    /// Calculates the checksum of the frame.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(u8)`: The checksum of the frame if the address is present.
+    /// - `Err(Box<dyn Error>)`: An error indicating that the address is required.
     fn checksum(&self) -> Result<u8, Box<dyn Error>> {
         match &self.address {
             None => Err("Address is required".into()),
@@ -197,12 +225,30 @@ impl FrameBuilder {
         }
     }
 
-    pub fn address(&mut self, address: Address) -> &mut Self {
+    /// Sets the address of the frame.
+    ///
+    /// # Arguments
+    ///
+    /// - `address`: The address to set.
+    ///
+    /// # Returns
+    ///
+    /// - `&mut Self`: A mutable reference to the `FrameBuilder` object.
+    pub fn with_address(&mut self, address: Address) -> &mut Self {
         self.address = Some(address);
         self
     }
 
-    pub fn content(&mut self, content: String) -> &mut Self {
+    /// Sets the content of the frame.
+    ///
+    /// # Arguments
+    ///
+    /// - `content`: The content to set.
+    ///
+    /// # Returns
+    ///
+    /// - `&mut Self`: A mutable reference to the `FrameBuilder` object.
+    pub fn with_content(&mut self, content: String) -> &mut Self {
         if content.ends_with("\r\n") {
             self.content = Some(content);
         } else {
@@ -211,15 +257,29 @@ impl FrameBuilder {
         self
     }
 
-    pub fn control(&mut self, control: u8) -> &mut Self {
+    /// Sets the control of the frame.
+    ///
+    /// # Arguments
+    ///
+    /// - `control`: The control to set.
+    ///
+    /// # Returns
+    ///
+    /// - `&mut Self`: A mutable reference to the `FrameBuilder` object.
+    pub fn with_control(&mut self, control: u8) -> &mut Self {
         self.control = control;
         self
     }
 
+    /// Builds the frame.
+    ///
+    /// # Returns
+    ///
+    /// - [`Frame`]: The built frame.
     pub fn build(&self) -> Frame {
         Frame {
             header: 0xF9,
-            address: self.address.clone().unwrap(),
+            address: self.address.unwrap(),
             control: self.control,
             length: self.length().unwrap(),
             content: self.content.clone().unwrap(),
@@ -229,7 +289,7 @@ impl FrameBuilder {
     }
 }
 
-/// GSM 07.10 Frame
+/// Represents a frame in the GSM0710 protocol.
 ///
 /// The Frame struct is defined as follows:
 ///
@@ -248,8 +308,13 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Converts the frame to a byte vector.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<u8>` containing the byte representation of the frame.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut data = vec![self.header, self.address.clone().0, self.control];
+        let mut data = vec![self.header, self.address.0, self.control];
         if self.length > MAX_SINGLE_BIT_LENGTH {
             data.push((self.length >> 8) as u8);
             data.push((self.length & 0xFF) as u8);
@@ -262,10 +327,24 @@ impl Frame {
         data
     }
 
+    /// Converts the frame to a hexadecimal string.
+    ///
+    /// # Returns
+    ///
+    /// A `String` containing the hexadecimal representation of the frame.
     pub fn to_hex_string(&self) -> String {
         self.to_bytes().encode_hex::<String>()
     }
 
+    /// Creates a frame from a byte vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - A `Vec<u8>` containing the byte representation of the frame.
+    ///
+    /// # Returns
+    ///
+    /// A `Frame` object created from the byte vector.
     pub fn from_bytes(data: Vec<u8>) -> Frame {
         let mut p = 0;
         let header = data[p];
@@ -297,6 +376,14 @@ impl Frame {
         }
     }
 
+    /// Verifies the integrity of the frame.
+    ///
+    /// * If the length field matches the content length, the length field is valid.
+    /// * If the checksum matches the calculated checksum, the checksum is valid.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the frame is valid, `false` otherwise.
     pub fn verify(&self) -> bool {
         let content_len = self.content.len() as u16;
         if content_len > MAX_SINGLE_BIT_LENGTH {
@@ -314,36 +401,6 @@ impl Frame {
     }
 }
 
-impl Display for Frame {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.length > 255 {
-            write!(
-                f,
-                "[{:#02x}-{}-{:#02x}-{:#04x}-{}-{:#02x}-{:#02x}]",
-                self.header,
-                self.address,
-                self.control,
-                self.length,
-                self.content,
-                self.checksum,
-                self.footer
-            )
-        } else {
-            write!(
-                f,
-                "[{:#02x}-{}-{:#02x}-{:#02x}-{}-{:#02x}-{:#02x}]",
-                self.header,
-                self.address.0,
-                self.control,
-                self.length,
-                self.content,
-                self.checksum,
-                self.footer
-            )
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,8 +408,8 @@ mod tests {
     #[test]
     fn test_packet_builder() {
         let p = FrameBuilder::default()
-            .address(Address::default())
-            .content("AT+CMUX?".to_string())
+            .with_address(Address::default())
+            .with_content("AT+CMUX?".to_string())
             .build();
         assert_eq!(p.header, 0xF9);
         assert_eq!(p.address, DLCI::AT.into());
@@ -370,8 +427,8 @@ mod tests {
             .repeat(10);
         let len = (content.len() + 2) * 2; // more than 128, so bit 1 is set zero
         let p = FrameBuilder::default()
-            .address(Address::default())
-            .content(content)
+            .with_address(Address::default())
+            .with_content(content)
             .build();
         assert_eq!(p.length, len as u16);
     }
@@ -379,8 +436,8 @@ mod tests {
     #[test]
     fn test_packet_to_bytes() {
         let p = FrameBuilder::default()
-            .address(Address::default())
-            .content("AT+CMUX?".to_string())
+            .with_address(Address::default())
+            .with_content("AT+CMUX?".to_string())
             .build();
         let data = p.to_hex_string();
         assert_eq!(data, "f907ef1541542b434d55583f0d0a2cf9".to_string());
@@ -391,8 +448,8 @@ mod tests {
         let content = "AT+CMUX?".to_string();
         let len = (content.len() + 2) * 2 + 1; // less than 128, so bit 1 is set 1
         let p = FrameBuilder::default()
-            .address(Address::default())
-            .content("AT+CMUX?".to_string())
+            .with_address(Address::default())
+            .with_content("AT+CMUX?".to_string())
             .build();
         let d = Frame::from_bytes(p.to_bytes());
         assert_eq!(p, d);
@@ -407,8 +464,8 @@ mod tests {
             .repeat(10);
         let len = (content.len() + 2) * 2; // more than 128, so bit 1 is set zero
         let p = FrameBuilder::default()
-            .address(Address::default())
-            .content(content)
+            .with_address(Address::default())
+            .with_content(content)
             .build();
         let d = Frame::from_bytes(p.to_bytes());
         assert_eq!(p, d);
