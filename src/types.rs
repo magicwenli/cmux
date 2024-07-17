@@ -200,6 +200,7 @@ impl FrameType {
 /// * UI (Unnumbered Information): The UI command/response will be used to send information. There is no specified response to the UI command/response. For the UI frame, the FCS shall be calculated over **all fields (Address, Control, Length Indicator, and Information)**. Support of UI frames is optional.
 ///
 /// # Example
+///
 /// ```
 /// use gsm0710::types::Control;
 /// use gsm0710::types::FrameType;
@@ -213,7 +214,7 @@ impl FrameType {
 /// let control = control.with_frame_type(FrameType::UA);
 /// assert_eq!(control.frame_type(), FrameType::UA);
 /// ```
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Control(u8);
 
 impl Control {
@@ -274,6 +275,15 @@ impl Default for Control {
         Control::new()
             .with_pf(false)
             .with_frame_type(FrameType::UIH)
+    }
+}
+
+impl Debug for Control {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Control")
+            .field("frame_type", &self.frame_type())
+            .field("pf", &self.pf())
+            .finish()
     }
 }
 
