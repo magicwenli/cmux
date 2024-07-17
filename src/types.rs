@@ -1,7 +1,8 @@
+/// This module contains types and functions related to GSM 07.10 protocol.
 use crc::Crc;
 use hex::ToHex;
 use std::error::Error;
-use std::fmt::Display;
+use std::fmt::Debug;
 
 /// Maximum length of a single octet.
 const MAX_SINGLE_BIT_LENGTH: u16 = 127;
@@ -62,18 +63,7 @@ impl From<Address> for DLCI {
     }
 }
 
-impl Display for DLCI {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DLCI::AT => write!(f, "AT"),
-            DLCI::SMS => write!(f, "SMS"),
-            DLCI::VOICE => write!(f, "VOICE"),
-            DLCI::DATA => write!(f, "DATA"),
-        }
-    }
-}
-
-/// Address
+/// Address Field of [`Frame`]
 ///
 /// <table>
 ///   <tr>
@@ -113,42 +103,195 @@ impl Display for DLCI {
 /// use gsm0710::types::DLCI;
 ///
 /// let addr = Address::default();
-///
 /// assert_eq!(addr.0, 0b111);
-/// assert_eq!(addr.with_cr(true).0, 0b111);
-/// assert_eq!(addr.with_cr(false).0, 0b101);
-/// assert_eq!(addr.with_dlci(DLCI::DATA).0, 0b10111);
+///
+/// let addr = addr.with_cr(false);
+/// assert_eq!(addr.0, 0b101);
+///
+/// let addr = addr.with_dlci(DLCI::DATA);
+/// assert_eq!(addr.0, 0b10101);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Address(pub u8);
 
 impl Address {
+    /// Creates a new `Address` with the specified EA (Extension Address) bit.
+    ///
+    /// # Arguments
+    ///
+    /// * `ea` - The value of the EA bit.
+    ///
+    /// # Returns
+    ///
+    /// A new `Address` with the specified EA bit.
+    fn with_ea(&self, ea: bool) -> Address {
+        Address(bit_set_to(self.0, 0, ea))
+    }
+
+    /// Creates a new `Address` with the specified CR (Command/Response) bit.
+    ///
+    /// # Arguments
+    ///
+    /// * `cr` - The value of the CR bit.
+    ///
+    /// # Returns
+    ///
+    /// A new `Address` with the specified CR bit.
     pub fn with_cr(&self, cr: bool) -> Address {
         Address(bit_set_to(self.0, 1, cr))
     }
 
+    /// Creates a new `Address` with the specified [`DLCI`] (Data Link Connection Identifier).
+    ///
+    /// # Arguments
+    ///
+    /// * `dlci` - The [`DLCI`] value.
+    ///
+    /// # Returns
+    ///
+    /// A new `Address` with the specified [`DLCI`].
     pub fn with_dlci(&self, dlci: DLCI) -> Address {
-        Address((self.0 & 0x3) | ((dlci as u8 & 0x3F) << 2))
+        let ea = self.0 & (1 << 0);
+        let cr = self.0 & (1 << 1);
+        let address = Address::from(dlci);
+        Address(address.0 | ea | cr)
     }
 }
 
 impl From<DLCI> for Address {
     fn from(dlci: DLCI) -> Self {
-        Address::default().with_dlci(dlci)
+        Address((dlci as u8) << 2)
     }
 }
 
 impl Default for Address {
     /// Default with DLCI::AT and C/R 1
     fn default() -> Self {
-        Address(0b111)
+        Address::from(DLCI::AT).with_cr(true).with_ea(true)
     }
 }
 
-impl Display for Address {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let dlci = DLCI::from(*self);
-        write!(f, "{}", dlci)
+/// Frame Type of [`Frame`]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameType {
+    SABM,
+    UA,
+    DM,
+    DISC,
+    UIH,
+    UI,
+}
+
+/// Converts a [`Control`] enum variant into a [`FrameType`] enum variant.
+impl From<Control> for FrameType {
+    /// Converts the given `Control` variant into a corresponding `FrameType` variant.
+    ///
+    /// # Arguments
+    ///
+    /// * `control` - The [`Control`] variant to convert.
+    ///
+    /// # Returns
+    ///
+    /// The converted [`FrameType`] variant.
+    fn from(control: Control) -> Self {
+        match bit_set_to(control.0, 4, false) {
+            0b00101111 => FrameType::SABM,
+            0b01100011 => FrameType::UA,
+            0b00001111 => FrameType::DM,
+            0b01000011 => FrameType::DISC,
+            0b11101111 => FrameType::UIH,
+            0b00000011 => FrameType::UI,
+            _ => FrameType::UI,
+        }
+    }
+}
+
+/// Control Field of [`Frame`]
+///
+/// The Control field is a 8-bit field, structured as follows:
+///
+/// | **Frame Type**                                 | **1** | **2** | **3** | **4** | **5** | **6** | **7** | **8** | **Notes** |
+/// |------------------------------------------------|-------|-------|-------|-------|-------|-------|-------|-------|-----------|
+/// | SABM (Set Asynchronous Balanced Mode)          | 1     | 1     | 1     | 1     | P/F   | 1     | 0     | 0     |           |
+/// | UA (Unnumbered Acknowledgement)                | 1     | 1     | 0     | 0     | P/F   | 1     | 1     | 0     |           |
+/// | DM (Disconnected Mode)                         | 1     | 1     | 1     | 1     | P/F   | 0     | 0     | 0     |           |
+/// | DISC (Disconnect)                              | 1     | 1     | 0     | 0     | P/F   | 0     | 1     | 0     |           |
+/// | UIH (Unnumbered Information with Header check) | 1     | 1     | 1     | 1     | P/F   | 1     | 1     | 1     |           |
+/// | UI (Unnumbered Information)                    | 1     | 1     | 0     | 0     | P/F   | 0     | 0     | 0     | Optional  |
+///
+/// * P/F stands for Poll/Final bit.
+/// * SABM (Set Asynchronous Balance Mode): SABM command shall be send by the TE (the host) to the UE (the target) to confirm the acceptance of SABM by transmission of UA response.
+/// * UA (Unnumbered Acknowledgement): The UA response is sent by the module as an acknowledgement that a SABM or DISC command was accepted.
+/// * DM (Disconnected Mode): In case if the module rejects SABM or DISC command, it will send DM response. For example, if SABM is sent for a DLCI not supported or if a DISC is sent to DLCI address already closed, this frame will be send.
+/// * DISC (Disconnect): The DISC is used to close a previously established connection. If the application sends a DISC for the DLCI 1 and DLCI 1 is already established, then it will be closed. The module will answer to this command with an UA frame.
+/// * UIH (Unnumbered Information with Header check): The UIH command/response will be used to send information. For the UIH frame, the FCS will be calculated over **only the address, control and length fields**. There is no specified response to the UIH command/response.
+/// * UI (Unnumbered Information): The UI command/response will be used to send information. There is no specified response to the UI command/response. For the UI frame, the FCS shall be calculated over **all fields (Address, Control, Length Indicator, and Information)**. Support of UI frames is optional.
+///
+/// # Example
+/// ```
+/// use gsm0710::types::Control;
+/// use gsm0710::types::FrameType;
+///
+/// let control = Control::default();
+/// assert_eq!(control, Control(0b11101111));
+///
+/// let control = control.with_pf(true);
+/// assert_eq!(control, Control(0b11111111));
+///
+/// let control = control.with_type(FrameType::UA);
+/// assert_eq!(control, Control(0b01110011));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Control(pub u8);
+
+impl From<FrameType> for Control {
+    fn from(frame_type: FrameType) -> Self {
+        match frame_type {
+            FrameType::SABM => Control(0b00101111),
+            FrameType::UA => Control(0b01100011),
+            FrameType::DM => Control(0b00001111),
+            FrameType::DISC => Control(0b01000011),
+            FrameType::UIH => Control(0b11101111),
+            FrameType::UI => Control(0b00000011),
+        }
+    }
+}
+
+impl Default for Control {
+    /// Default with P/F 1 and UIH type
+    fn default() -> Self {
+        Control::from(FrameType::UIH).with_pf(false)
+    }
+}
+
+/// Implementation of the `Control` struct.
+impl Control {
+    /// Creates a new `Control` instance with the specified `pf` value.
+    ///
+    /// # Arguments
+    ///
+    /// * `pf` - A boolean value indicating the value of the PF bit.
+    ///
+    /// # Returns
+    ///
+    /// A new `Control` instance with the specified `pf` value.
+    pub fn with_pf(&self, pf: bool) -> Control {
+        Control(bit_set_to(self.0, 4, pf))
+    }
+
+    /// Creates a new `Control` instance with the specified `frame_type` value.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_type` - A [`FrameType`] value indicating the type of the frame.
+    ///
+    /// # Returns
+    ///
+    /// A new `Control` instance with the specified `frame_type` value.
+    pub fn with_type(&self, frame_type: FrameType) -> Control {
+        let pf = self.0 & (1 << 4);
+        let control = Control::from(frame_type);
+        Control(bit_set_to(control.0, 4, pf != 0))
     }
 }
 
@@ -171,20 +314,11 @@ impl Display for Address {
 /// # Note
 ///
 /// FrameBuilder will automatically add `\r\n` to the end of content if it is not present.
+#[derive(Debug, Default)]
 pub struct FrameBuilder {
     address: Option<Address>,
     content: Option<String>,
-    control: u8,
-}
-
-impl Default for FrameBuilder {
-    fn default() -> Self {
-        FrameBuilder {
-            address: None,
-            content: None,
-            control: 0xEF,
-        }
-    }
+    control: Control,
 }
 
 /// The `FrameBuilder` struct is responsible for building frames.
@@ -220,7 +354,7 @@ impl FrameBuilder {
             None => Err("Address is required".into()),
             Some(addr) => {
                 let len = self.length()?;
-                checksum(addr.0, self.control, len)
+                checksum(addr.0, self.control.0, len)
             }
         }
     }
@@ -267,7 +401,7 @@ impl FrameBuilder {
     ///
     /// - `&mut Self`: A mutable reference to the `FrameBuilder` object.
     pub fn with_control(&mut self, control: u8) -> &mut Self {
-        self.control = control;
+        self.control = Control(control);
         self
     }
 
@@ -293,14 +427,14 @@ impl FrameBuilder {
 ///
 /// The Frame struct is defined as follows:
 ///
-/// | **Name** | Flag    | [`Address`] | Control | Length Indicator | Information                                      | FCS     | Flag    |
+/// | **Name** | Flag    | [`Address`] | [`Control`] | Length Indicator | Information                                      | FCS     | Flag    |
 /// |----------|---------|-------------|---------|------------------|--------------------------------------------------|---------|---------|
 /// | **Size** | 1 octet |   1 octet   | 1 octet | 1 or 2 octets    | Unspecified length but integral number of octets | 1 octet | 1 octet |
 #[derive(Debug, PartialEq, Eq)]
 pub struct Frame {
     pub header: u8,
     pub address: Address,
-    pub control: u8,
+    pub control: Control,
     pub length: u16,
     pub content: String,
     pub checksum: u8,
@@ -314,7 +448,7 @@ impl Frame {
     ///
     /// A `Vec<u8>` containing the byte representation of the frame.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut data = vec![self.header, self.address.0, self.control];
+        let mut data = vec![self.header, self.address.0, self.control.0];
         if self.length > MAX_SINGLE_BIT_LENGTH {
             data.push((self.length >> 8) as u8);
             data.push((self.length & 0xFF) as u8);
@@ -351,7 +485,7 @@ impl Frame {
         p += 1;
         let address = Address(data[p]);
         p += 1;
-        let control = data[p];
+        let control = Control(data[p]);
         p += 1;
         let length = if data[p] & 0x1 == 0 {
             let l = ((data[p] as u16) << 8) | data[p + 1] as u16;
@@ -383,20 +517,26 @@ impl Frame {
     ///
     /// # Returns
     ///
-    /// `true` if the frame is valid, `false` otherwise.
-    pub fn verify(&self) -> bool {
+    /// - `Ok(())`: If the frame is valid.
+    /// - `Err(Box<dyn Error>)`: If the frame is invalid.
+    pub fn verify(&self) -> Result<(), Box<dyn Error>> {
         let content_len = self.content.len() as u16;
         if content_len > MAX_SINGLE_BIT_LENGTH {
             if self.length != (content_len << 1) {
-                return false;
+                return Err("Length field is invalid".into());
             }
         } else if self.length != (content_len << 1) + 1 {
-            return false;
+            return Err("Length field is invalid".into());
         }
 
-        match checksum(self.address.0, self.control, self.length) {
-            Ok(c) => c == self.checksum,
-            Err(_) => false,
+        if let Ok(c) = checksum(self.address.0, self.control.0, self.length) {
+            if c != self.checksum {
+                return Err("Checksum is invalid".into());
+            } else {
+                Ok(())
+            }
+        } else {
+            return Err("Checksum calculation failed".into());
         }
     }
 }
@@ -412,8 +552,8 @@ mod tests {
             .with_content("AT+CMUX?".to_string())
             .build();
         assert_eq!(p.header, 0xF9);
-        assert_eq!(p.address, DLCI::AT.into());
-        assert_eq!(p.control, 0xEF);
+        assert_eq!(p.address, Address::default());
+        assert_eq!(p.control, Control::default());
         assert_eq!(p.length, 0x15);
         assert_eq!(p.content, "AT+CMUX?\r\n");
         assert_eq!(p.checksum, 0x2C);
@@ -470,6 +610,6 @@ mod tests {
         let d = Frame::from_bytes(p.to_bytes());
         assert_eq!(p, d);
         assert_eq!(d.length, len as u16);
-        assert!(d.verify());
+        assert_eq!(d.verify().is_ok(), true);
     }
 }
