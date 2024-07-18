@@ -621,7 +621,7 @@ mod tests {
         let d = Frame::from_bytes(p.to_bytes());
         assert_eq!(p, d);
         assert_eq!(d.length, len as u16);
-        assert_eq!(d.verify().is_ok(), true);
+        assert!(d.verify().is_ok());
     }
 
     #[test]
