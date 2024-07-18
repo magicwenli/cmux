@@ -1,6 +1,6 @@
 [package]
 name = "cmux"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 authors = ["magicWenli <yxnian@outlook.com>"]
 description = "A library for parsing GSM 07.10 Frame"
