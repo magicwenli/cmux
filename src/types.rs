@@ -7,6 +7,24 @@ use std::fmt::Debug;
 /// Maximum length of a single octet.
 const MAX_SINGLE_BIT_LENGTH: u16 = 127;
 
+#[derive(PartialEq, Eq, Clone)]
+pub struct ContentStr(String);
+
+impl Debug for ContentStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContentStr")
+            .field("str", &self.0)
+            .field("raw", &format_args!("{:02X?}", self.0.as_bytes()))
+            .finish()
+    }
+}
+
+impl PartialEq<&str> for ContentStr {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
 /// Sets or clears a specific bit in a byte.
 ///
 /// # Arguments
@@ -420,7 +438,7 @@ impl FrameBuilder {
             address: self.address.expect("Address is required"),
             control: self.control.expect("Control is required"),
             length: self.length().expect("Length is required"),
-            content: self.content.clone().expect("Content is required"),
+            content: ContentStr(self.content.clone().expect("Content is required")),
             checksum: self.checksum().expect("Checksum is required"),
             footer: 0xF9,
         }
@@ -440,7 +458,7 @@ pub struct Frame {
     pub address: Address,
     pub control: Control,
     pub length: u16,
-    pub content: String,
+    pub content: ContentStr,
     pub checksum: u8,
     pub footer: u8,
 }
@@ -463,7 +481,7 @@ impl Frame {
         } else {
             data.push(self.length as u8);
         }
-        data.extend(self.content.as_bytes());
+        data.extend(self.content.0.as_bytes());
         data.push(self.checksum);
         data.push(self.footer);
         data
@@ -504,7 +522,7 @@ impl Frame {
             p += 1;
             l
         };
-        let content = String::from_utf8(data[p..data.len() - 2].to_vec()).unwrap();
+        let content = ContentStr(String::from_utf8_lossy(&data[p..data.len() - 2]).to_string());
         let checksum = data[data.len() - 2];
         let footer = data[data.len() - 1];
         Frame {
@@ -528,7 +546,7 @@ impl Frame {
     /// - `Ok(())`: If the frame is valid.
     /// - `Err(Box<dyn Error>)`: If the frame is invalid.
     pub fn verify(&self) -> Result<(), Box<dyn Error>> {
-        let content_len = self.content.len() as u16;
+        let content_len = self.content.0.len() as u16;
         if content_len > MAX_SINGLE_BIT_LENGTH {
             if self.length != (content_len << 1) {
                 return Err("Length field is invalid".into());
@@ -644,7 +662,7 @@ mod tests {
             p.address.into_bits(),
             p.control.into_bits(),
             p.length as u8,
-            &p.content,
+            &p.content.0,
         )
         .unwrap();
         assert_eq!(ori, exp);

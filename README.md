@@ -1,4 +1,4 @@
-# cmux
+# CMUX
 
 This lib allows you to parse and generate GSM 07.10 Frames.
 
