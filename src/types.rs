@@ -73,24 +73,31 @@ pub fn checksum_ui(addr: u8, control: u8, length: u8, content: &str) -> Result<u
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum DLCI {
-    AT = 0x1,
-    SMS = 0x3,
-    VOICE = 0x4,
-    DATA = 0x5,
+    AT(u8),
+    SMS(u8),
+    VOICE(u8),
+    DATA(u8),
+    OTHER(u8),
 }
 
 impl DLCI {
     const fn into_bits(self) -> u8 {
-        self as _
+        match self {
+            DLCI::AT(_) => 0x1,
+            DLCI::SMS(_) => 0x3,
+            DLCI::VOICE(_) => 0x4,
+            DLCI::DATA(_) => 0x5,
+            DLCI::OTHER(value) => value,
+        }
     }
 
     const fn from_bits(value: u8) -> Self {
         match value {
-            0x1 => DLCI::AT,
-            0x3 => DLCI::SMS,
-            0x4 => DLCI::VOICE,
-            0x5 => DLCI::DATA,
-            _ => DLCI::DATA,
+            0x1 => DLCI::AT(0x1),
+            0x3 => DLCI::SMS(0x3),
+            0x4 => DLCI::VOICE(0x4),
+            0x5 => DLCI::DATA(0x5),
+            _ => DLCI::OTHER(value),
         }
     }
 }
